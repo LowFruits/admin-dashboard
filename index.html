@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LowFruits Admin</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-container">
+      <a href="index.html" class="nav-brand">LowFruits Admin</a>
+      <div class="nav-links">
+        <a href="index.html" class="active">רופאים</a>
+        <a href="patients.html">מטופלים</a>
+      </div>
+      <div class="nav-spacer"></div>
+      <div class="query-bar">
+        <input type="text" id="query-input" placeholder="חיפוש מהיר...">
+        <button id="query-btn">חפש</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="page-header">
+      <h1>רופאים</h1>
+      <a href="add-doctor.html" class="btn btn-primary">+ הוסף רופא</a>
+    </div>
+    <div id="doctors-grid" class="card-grid">
+      <div class="loading">טוען רופאים...</div>
+    </div>
+  </main>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/doctors.js"></script>
+</body>
+</html>

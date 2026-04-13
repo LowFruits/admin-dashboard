@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LowFruits Admin — פרטי רופא</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-container">
+      <a href="index.html" class="nav-brand">LowFruits Admin</a>
+      <div class="nav-links">
+        <a href="index.html" class="active">רופאים</a>
+        <a href="patients.html">מטופלים</a>
+      </div>
+      <div class="nav-spacer"></div>
+      <div class="query-bar">
+        <input type="text" id="query-input" placeholder="חיפוש מהיר...">
+        <button id="query-btn">חפש</button>
+      </div>
+    </div>
+  </nav>
+
+  <main class="main">
+    <div class="page-header">
+      <h1 id="doctor-name">טוען...</h1>
+      <a href="index.html" class="btn btn-secondary">חזור לרשימה</a>
+    </div>
+
+    <!-- Basic Info -->
+    <div class="section" id="info-section">
+      <div class="section-header">
+        <h2>פרטים בסיסיים</h2>
+        <button class="btn btn-primary btn-sm" id="save-info-btn" style="display:none">שמור</button>
+      </div>
+      <div class="section-body"><div class="loading">טוען...</div></div>
+    </div>
+
+    <!-- Health Funds -->
+    <div class="section" id="health-funds-section">
+      <div class="section-header">
+        <h2>קופות חולים</h2>
+      </div>
+      <div class="section-body"><div class="loading">טוען...</div></div>
+    </div>
+
+    <!-- Appointment Types -->
+    <div class="section" id="appt-types-section">
+      <div class="section-header">
+        <h2>סוגי תורים</h2>
+        <button class="btn btn-primary btn-sm" id="add-appt-type-btn">+ הוסף</button>
+      </div>
+      <div class="section-body"><div class="loading">טוען...</div></div>
+    </div>
+
+    <!-- Availability -->
+    <div class="section" id="availability-section">
+      <div class="section-header">
+        <h2>זמינות</h2>
+      </div>
+      <div class="section-body">
+        <div class="empty">ממשק זמינות יתווסף כשנקודות הקצה יהיו מוכנות</div>
+      </div>
+    </div>
+
+    <!-- Calendar -->
+    <div class="section" id="calendar-section">
+      <div class="section-header">
+        <h2>יומן תורים</h2>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          <button class="btn btn-secondary btn-sm" id="cal-prev">&rarr;</button>
+          <span id="cal-week-label"></span>
+          <button class="btn btn-secondary btn-sm" id="cal-next">&larr;</button>
+        </div>
+      </div>
+      <div class="section-body" id="calendar-body"><div class="loading">טוען...</div></div>
+    </div>
+  </main>
+
+  <div id="toast-container" class="toast-container"></div>
+  <div id="modal-root"></div>
+
+  <script src="js/api.js"></script>
+  <script src="js/doctor-detail.js"></script>
+</body>
+</html>
