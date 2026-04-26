@@ -14,11 +14,6 @@
         <a href="index.html" class="active">רופאים</a>
         <a href="patients.html">מטופלים</a>
       </div>
-      <div class="nav-spacer"></div>
-      <div class="query-bar">
-        <input type="text" id="query-input" placeholder="חיפוש מהיר...">
-        <button id="query-btn">חפש</button>
-      </div>
     </div>
   </nav>
 
@@ -59,9 +54,7 @@
       <div class="section-header">
         <h2>זמינות</h2>
       </div>
-      <div class="section-body">
-        <div class="empty">ממשק זמינות יתווסף כשנקודות הקצה יהיו מוכנות</div>
-      </div>
+      <div class="section-body"><div class="loading">טוען...</div></div>
     </div>
 
     <!-- Calendar -->
@@ -75,6 +68,23 @@
         </div>
       </div>
       <div class="section-body" id="calendar-body"><div class="loading">טוען...</div></div>
+    </div>
+
+    <!-- Messages -->
+    <div class="section" id="messages-section">
+      <div class="section-header">
+        <h2>הודעות</h2>
+        <div class="msg-controls">
+          <select id="msg-status-filter">
+            <option value="pending,read">פעילות</option>
+            <option value="pending">לא נקראו</option>
+            <option value="replied">נענו</option>
+            <option value="archived">בארכיון</option>
+            <option value="">הכל</option>
+          </select>
+        </div>
+      </div>
+      <div class="section-body"><div class="loading">טוען...</div></div>
     </div>
   </main>
 

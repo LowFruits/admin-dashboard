@@ -13,10 +13,27 @@ async function apiFetch(path, options = {}) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || JSON.stringify(err) || res.statusText);
+    throw new Error(formatApiError(err) || res.statusText);
   }
   if (res.status === 204) return null;
   return res.json();
+}
+
+function formatApiError(err) {
+  const detail = err && err.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((e) => {
+        const field = Array.isArray(e.loc) ? e.loc[e.loc.length - 1] : "";
+        const msg = e.msg || "";
+        return field ? `${field}: ${msg}` : msg;
+      })
+      .filter(Boolean)
+      .join("; ");
+  }
+  if (detail) return JSON.stringify(detail);
+  return "";
 }
 
 const api = {
@@ -55,15 +72,37 @@ const api = {
   },
 
   // --- Appointment Types ---
-  listAppointmentTypes(params = {}) {
+  listAppointmentTypes(doctorId, params = {}) {
     const qs = new URLSearchParams(params).toString();
-    return apiFetch(`/appointment-types/${qs ? "?" + qs : ""}`);
+    return apiFetch(`/doctors/${doctorId}/appointment-types${qs ? "?" + qs : ""}`);
   },
   createAppointmentType(data) {
     return apiFetch("/appointment-types/", { method: "POST", body: JSON.stringify(data) });
   },
   updateAppointmentType(id, data) {
     return apiFetch(`/appointment-types/${id}`, { method: "PUT", body: JSON.stringify(data) });
+  },
+
+  // --- Availability ---
+  getAvailability(doctorId) {
+    return apiFetch(`/doctors/${doctorId}/availability`);
+  },
+  createAvailabilityRule(data) {
+    return apiFetch("/availability-rules/", { method: "POST", body: JSON.stringify(data) });
+  },
+  deleteAvailabilityRule(ruleId) {
+    return apiFetch(`/availability-rules/${ruleId}`, { method: "DELETE" });
+  },
+  seedDefaultRules(doctorId) {
+    return apiFetch(`/availability-rules/seed-defaults?doctor_id=${encodeURIComponent(doctorId)}`, {
+      method: "POST",
+    });
+  },
+  createCalendarException(data) {
+    return apiFetch("/calendar-exceptions/", { method: "POST", body: JSON.stringify(data) });
+  },
+  deleteCalendarException(exceptionId) {
+    return apiFetch(`/calendar-exceptions/${exceptionId}`, { method: "DELETE" });
   },
 
   // --- Scheduling ---
@@ -86,6 +125,22 @@ const api = {
   getAppointmentsByPatient(params) {
     const qs = new URLSearchParams(params).toString();
     return apiFetch(`/appointments/by-patient?${qs}`);
+  },
+
+  // --- Messages ---
+  listMessages(doctorId, { status, limit = 20, offset = 0 } = {}) {
+    const qs = new URLSearchParams({ doctor_id: doctorId, limit, offset });
+    if (status) qs.set("status", status);
+    return apiFetch(`/messages/?${qs.toString()}`);
+  },
+  getMessage(id) {
+    return apiFetch(`/messages/${id}`);
+  },
+  updateMessageStatus(id, status) {
+    return apiFetch(`/messages/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ status }),
+    });
   },
 
   // --- Patients ---
