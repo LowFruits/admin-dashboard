@@ -12,7 +12,7 @@ async function loadDoctors() {
     grid.innerHTML = doctors
       .map(
         (doc) => `
-      <div class="card">
+      <a href="doctor.html?id=${doc.id}" class="card">
         <div class="card-title">${esc(doc.first_name)} ${esc(doc.last_name)}</div>
         <div class="card-meta">${esc(doc.specialty || "לא צוין")}</div>
         <div>
@@ -20,10 +20,7 @@ async function loadDoctors() {
             ${doc.is_active ? "פעיל" : "לא פעיל"}
           </span>
         </div>
-        <div class="card-actions">
-          <a href="doctor.html?id=${doc.id}" class="btn btn-primary btn-sm">פרטים</a>
-        </div>
-      </div>
+      </a>
     `
       )
       .join("");

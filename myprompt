@@ -1,7 +1,14 @@
-2. msg section exists but the יומן תורים has aan error msg: fail t fetch
-3. seems gos
-4. seems good
-5. seems good
-6. i didnt understand what to check here
-7. good
-8. will chekc later
+in the main dashboard page:
+1. when i want to enter a doctor i need to click on פרטים to enter the doctor, i want to change it so i can press anywhere on the doctor's box to navigate into that doctor's page.
+
+inside a doctor page:
+1. in the calender, when an appoitment is made i want it to display the client's name, and when pressing on the block of the appoitment i want a pop up window to display the appoitment details and allow editing the content.
+2. a future todo: also add to the above an option to send a msg to the client through that pop up window
+3. in the msgs section at the bottom, currently can only see the msgs but not send msgs, i want to allow the functionality that i can reply from there if i want
+4. at the top of the page i want quick access buttons that i can press and it will hop me to the right section in the page, for example instead of scrolling down to reach calender, i can press on a calender button and it will hop me down to the right place
+
+
+
+a new tab in the main page (next to doctors and patients) that is UI for manging the msging process (whatsapp like)
+1. i will describe the feature later. right now mark it as part of the todos.
+

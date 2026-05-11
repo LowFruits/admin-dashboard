@@ -5,3 +5,10 @@ Thumbs.db
 *~
 .idea/
 .vscode/
+
+# Local-only session continuity files (everything else under .work/ is tracked)
+.work/parked.md
+.work/handoff.md
+
+# Local IDE / Claude config
+.claude/
