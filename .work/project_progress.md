@@ -54,6 +54,11 @@ After fixing the #3c TZ bug earlier in the session, Tomer added six more feature
 - Browser-test the 38-item plan, starting with the #1 regression test (TZ-aware POST body still correct on book), then proportional blocks, then Y-snap, then patient details/edit, then full appointment edit (the riskiest).
 - Pick up unblocked todos: G (cancel reason input), I (show-cancelled toggle).
 
+**Closing note (session end 2026-05-12):**
+- Bundle shipped as commit `8d397bc` to origin/master; browser-tested by Tomer, edit flow works.
+- Two follow-up issues surfaced + fixed during testing: same-time edit bug (cancel-first hybrid) and leftover-cell tint (now matches empty cells, restored on hover).
+- Open work parked for next session: G (cancel reason input — frontend-only, ~20 LOC, fully unblocked) and I (show-cancelled toggle — frontend-only, ~30-40 LOC). Beyond those, the next high-leverage move is a `Database_Simulation` session to add `PATCH /appointments/{id}` (collapses the cancel-then-book workaround) and `POST /messages/send` (unblocks `C`, `F`, `H`).
+
 ### 2026-05-12 — Session 4 (#3c TZ-bug fix + slot-fetch refactor)
 
 Started the session investigating a TZ bug Tomer hit in production: backend rejected new-booking POST with `start_time: Input should have timezone info` because #3c (shipped yesterday without a plan) was constructing `${date}T${time}:00` (naive datetime) and POSTing it.
