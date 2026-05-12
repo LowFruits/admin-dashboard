@@ -7,6 +7,7 @@
 - [feedback_working_guidelines.md](feedback_working_guidelines.md) — Core collaboration rules
 - [feedback_brief_summaries.md](feedback_brief_summaries.md) — Keep "summary" replies to ~5 short lines
 - [feedback_per_pr_shipping.md](feedback_per_pr_shipping.md) — Sync work against backend changes ships as separate PRs, never bundled
+- [feedback_no_plan_no_code.md](feedback_no_plan_no_code.md) — Every non-trivial feature requires plan + /audit-plan before code — no exceptions
 
 ## Project
 - [project_context.md](project_context.md) — Admin dashboard purpose, tech stack, and current status

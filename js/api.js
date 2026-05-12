@@ -12,8 +12,10 @@ async function apiFetch(path, options = {}) {
     ...options,
   });
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(formatApiError(err) || res.statusText);
+    const errBody = await res.json().catch(() => ({ detail: res.statusText }));
+    const e = new Error(formatApiError(errBody) || res.statusText);
+    e.status = res.status;
+    throw e;
   }
   if (res.status === 204) return null;
   return res.json();
@@ -155,6 +157,9 @@ const api = {
   },
   getPatient(id) {
     return apiFetch(`/patients/${id}`);
+  },
+  updatePatient(id, data) {
+    return apiFetch(`/patients/${id}`, { method: "PUT", body: JSON.stringify(data) });
   },
   getPatientRelations(id) {
     return apiFetch(`/patients/${id}/relations`);

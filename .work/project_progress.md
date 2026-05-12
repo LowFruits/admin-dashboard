@@ -23,6 +23,61 @@ type: project
 - Added local `myprompt` file
 - **Note:** This entry reconstructed from git stats. The session was done from a separate working clone (`admin-dashboard/admin-dashboard/`) which was later deleted; its memory was partially restored from a 2026-04-26 backup but the original session-2 progress entry was lost. Original commit message was empty.
 
+### 2026-05-12 — Session 4 — Part 2 (calendar + modals overhaul)
+
+After fixing the #3c TZ bug earlier in the session, Tomer added six more features that all touched the calendar render or the two modals. Bundled into one PR (per Tomer's call, against per-PR-shipping rule) because they form one cohesive UX improvement.
+
+**Process correction:** Tomer flagged that I'd shipped #3c yesterday without plan-mode/audit-plan. New feedback memory `feedback_no_plan_no_code.md` added earlier today. Every feature this session went through plan-mode + `/audit-plan` before code.
+
+**Shipped:**
+- **Calendar:** appointment blocks now sized and positioned proportionally (top%/height% from start_time/end_time relative to cell duration). Cells use absolute positioning inside relative-positioned slot containers.
+- **Calendar:** unified cell click handler with 15-min Y-snap. Cell defines the hour prefix; Y position picks the minute suffix (00/15/30/45). Has-appointment cells filter anchors to empty sub-windows so the snap can't land on an occupied minute.
+- **Book modal:** editable `<input type="time" step="900">` (was static text). Closure-tracked `selectedTime`.
+- **Book modal:** patient details panel — picking a patient shows name/phone/email/ID/DOB; ערוך toggles to inline edit; save calls `PUT /patients/{id}`. Confirm popup guards against accidentally wiping a previously-set optional field.
+- **Book modal:** create form gains optional `email`, `id_number`, `date_of_birth` inputs. Both search-pick and create flows route through unified `onPatientSelected(p)`.
+- **Appointment-detail modal:** "תזמן מחדש" replaced with "ערוך תור" → full edit flow. Patient locked; date/time/type/notes editable. Slot chips highlight current time when date+type unchanged. Type dropdown includes deactivated current type as "(לא פעיל)". Save uses book-first/cancel-second; 404 on cancel-old treated as success.
+- **API client:** patched `apiFetch` to attach `e.status = res.status` on thrown errors (enables 404 detection); added `api.updatePatient(id, data)`.
+
+**Decisions / insights:**
+- Bundled per Tomer's call: all six features live in the same two modals + calendar render; per-PR-shipping rule explicitly waived once.
+- Patient remains locked during appointment edit (Tomer's call).
+- Notes editing uses cancel+book workaround until backend PATCH ships (`B-edit-c`). When `H` (patient notifications) lands, cancel+book pairs must be coalesced to avoid double-spamming patients — annotation added inline in `todos.md` H entry.
+- Display-only behavior change: empty-cell clicks now snap by Y (used to always book at slot start). Acceptable per Tomer.
+
+**Follow-up fix (same session):**
+- Browser testing surfaced two issues: (a) notes-only / type-only edits failed with "Time slot is no longer available" because book-first runs against the still-occupied original; (b) leftover area in partially-filled cells was tinted.
+- Fix: hybrid ordering in `performEditSave` — cancel-first when `newStartTime === original.startTime`, book-first otherwise. New `renderEditRecovery` panel shown when cancel succeeded but book failed (shows full payload + retry button + close-fires-loadCalendar).
+- CSS: removed `.slot.has-appointment` tint; added `:hover` rule so leftover area matches empty-cell hover behavior.
+- Long-term fix tracked at `todos.md` B-edit-c (backend PATCH endpoint).
+
+**Next steps:**
+- Browser-test the 38-item plan, starting with the #1 regression test (TZ-aware POST body still correct on book), then proportional blocks, then Y-snap, then patient details/edit, then full appointment edit (the riskiest).
+- Pick up unblocked todos: G (cancel reason input), I (show-cancelled toggle).
+
+### 2026-05-12 — Session 4 (#3c TZ-bug fix + slot-fetch refactor)
+
+Started the session investigating a TZ bug Tomer hit in production: backend rejected new-booking POST with `start_time: Input should have timezone info` because #3c (shipped yesterday without a plan) was constructing `${date}T${time}:00` (naive datetime) and POSTing it.
+
+**Process correction:** Tomer flagged that I shipped #3c yesterday without entering plan-mode or running `/audit-plan`. New feedback rule added (`feedback_no_plan_no_code.md`): every non-trivial feature requires plan + audit before code, no exceptions, even when the change "looks like a small addition".
+
+**Replanned #3c from scratch:**
+- Wrote full plan, ran `/audit-plan` (caught 7 auto-fixes + 1 decision)
+- Tomer chose to bundle a small refactor (extract shared slot-fetch helper) into the same PR
+
+**Shipped:**
+- New module-level helper `fetchAvailableSlots({doctorId, date, appointmentTypeId})` in `js/doctor-detail.js:890` — wraps `api.getSlots`, defensive `Array.isArray` guard, sort by `start_time.localeCompare`
+- Rewrote `handleBookConfirm` (book-from-empty-slot) as a two-phase flow: (1) fetch slots via helper, find slot where `slotTimeLabel === clicked time`; (2) book using the API-returned `start_time` string verbatim (TZ-aware). Null-guards for modal-closed-during-fetch. Error UX surfaces "no longer available" vs network vs HTTP separately.
+- Rewired `fetchAndRenderSlots` (#3b reschedule slot-picker) to use the same helper. Chip-render logic unchanged.
+
+**Decisions / insights:**
+- TZ correctness comes from round-tripping the slots API's `start_time` string — never construct TZ-aware strings client-side. Reaffirms `project_scheduling_slots_tz_bug.md`'s "no dashboard shim" rule
+- The fetch-then-book pattern also gives free concurrent-booking protection (slot must exist in current slots response, or else "כבר אינה זמינה")
+- `slotTimeLabel` regex `/T(\d{2}:\d{2})/` is prefix-anchored — tolerates millis, offsets, and `Z` suffix without modification
+
+**Next steps:**
+- Browser-test the manual test plan in `seems-to-work-lets-glimmering-swan.md` (test #0 first: slot format verification; then #1 TZ regression; then #3 reschedule regression)
+- Pick up unblocked todos: G (cancel reason input), I (show-cancelled toggle)
+
 ### 2026-05-11 — Session 3 (memory migration + 6 features)
 
 **Memory + tooling infrastructure** (this repo + `~/.claude-personal/`):

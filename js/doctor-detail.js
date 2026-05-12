@@ -740,19 +740,30 @@ async function loadCalendar() {
       else if (closed) classes.push("closed");
 
       const styleAttr = `style="grid-column: ${d + 2}; grid-row: ${gridRow} / span ${span}"`;
-      const dataAttrs = `data-date="${dateStr}" data-slot-min="${slotStartMin}"`;
+      const dataAttrs = `data-date="${dateStr}" data-slot-min="${slotStartMin}" data-day-dur="${dayDur}"`;
 
       if (hasAppt) {
         slot.sort((a, b) => a.start - b.start);
         const blocks = slot
           .map(({ appt, start }) => {
+            const end = new Date(appt.end_time);
+            const apptStartMin = start.getHours() * 60 + start.getMinutes();
+            const apptEndMin = end.getHours() * 60 + end.getMinutes();
+            const rawTopPct = ((apptStartMin - slotStartMin) / dayDur) * 100;
+            const rawHeightPct = ((apptEndMin - apptStartMin) / dayDur) * 100;
+            const safeTop = Number.isFinite(rawTopPct) ? rawTopPct : 0;
+            const safeHeight = Number.isFinite(rawHeightPct) ? rawHeightPct : 100;
+            const topPct = Math.max(0, Math.min(100, safeTop));
+            const heightPct = Math.max(0, Math.min(100 - topPct, safeHeight));
+            const blockStyle = `style="top: ${topPct}%; height: ${heightPct}%;"`;
+
             const time = fmtClock(start);
             const patient = patientsMap.get(appt.patient_id);
             const name = patient
               ? `${patient.first_name || ""} ${patient.last_name || ""}`.trim()
               : "";
             const label = name ? `${time} · ${name}` : time;
-            return `<div class="appointment-block" data-appt-id="${attr(appt.id)}" title="${attr(label)}">${esc(label)}</div>`;
+            return `<div class="appointment-block" ${blockStyle} data-appt-id="${attr(appt.id)}" title="${attr(label)}">${esc(label)}</div>`;
           })
           .join("");
         cellHTMLs.push(`<div class="${classes.join(" ")}" ${styleAttr} ${dataAttrs}>${blocks}</div>`);
@@ -784,14 +795,55 @@ async function loadCalendar() {
     });
   });
 
-  // Empty open slot → new booking modal. Closed/blocked/has-appointment cells stay inert.
-  body.querySelectorAll(".slot:not(.has-appointment):not(.closed):not(.blocked)").forEach((el) => {
-    el.addEventListener("click", () => {
+  // Unified cell click → snap Y position to nearest 15-min in-cell anchor.
+  // Has-appointment cells filter anchors to empty sub-windows so the snap
+  // can't land on an occupied minute. Block clicks call stopPropagation,
+  // so they won't trigger this handler. Closed/blocked cells stay inert.
+  body.querySelectorAll(".slot:not(.closed):not(.blocked)").forEach((el) => {
+    el.addEventListener("click", (e) => {
       const date = el.dataset.date;
       const slotMin = parseInt(el.dataset.slotMin, 10);
-      if (!date || isNaN(slotMin)) return;
-      const hh = String(Math.floor(slotMin / 60)).padStart(2, "0");
-      const mm = String(slotMin % 60).padStart(2, "0");
+      const dayDur = parseInt(el.dataset.dayDur, 10);
+      if (!date || isNaN(slotMin) || isNaN(dayDur)) return;
+
+      const anchorOffsets = [];
+      for (let m = 0; m < dayDur; m += 15) anchorOffsets.push(m);
+
+      let validAnchors = anchorOffsets;
+      if (el.classList.contains("has-appointment")) {
+        const slotEndMin = slotMin + dayDur;
+        const bucket = buckets[`${date} ${slotMin}`] || [];
+        const sorted = [...bucket].sort((a, b) => a.start - b.start);
+        const windows = [];
+        let cursor = slotMin;
+        for (const { appt, start } of sorted) {
+          const aStart = start.getHours() * 60 + start.getMinutes();
+          const aEndDate = new Date(appt.end_time);
+          const aEnd = aEndDate.getHours() * 60 + aEndDate.getMinutes();
+          if (aStart > cursor) windows.push([cursor, aStart]);
+          cursor = Math.max(cursor, aEnd);
+        }
+        if (cursor < slotEndMin) windows.push([cursor, slotEndMin]);
+        validAnchors = anchorOffsets.filter((off) =>
+          windows.some(([s, e]) => slotMin + off >= s && slotMin + off < e)
+        );
+        if (!validAnchors.length) return;
+      }
+
+      const rect = el.getBoundingClientRect();
+      const clickOffset = Math.max(
+        0,
+        Math.min(dayDur, ((e.clientY - rect.top) / rect.height) * dayDur)
+      );
+      const snapped = validAnchors.reduce(
+        (best, a) =>
+          Math.abs(a - clickOffset) < Math.abs(best - clickOffset) ? a : best,
+        validAnchors[0]
+      );
+
+      const totalMin = slotMin + snapped;
+      const hh = String(Math.floor(totalMin / 60)).padStart(2, "0");
+      const mm = String(totalMin % 60).padStart(2, "0");
       showBookModal({ date, time: `${hh}:${mm}`, typesMap });
     });
   });
@@ -884,6 +936,32 @@ function slotTimeLabel(s) {
   return m ? m[1] : s;
 }
 
+// Display helpers — pure, module-level.
+function formatDob(iso) {
+  if (!iso) return "";
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+}
+
+function truncForDiff(s, n = 80) {
+  const v = String(s || "—");
+  return v.length > n ? v.slice(0, n) + "…" : v;
+}
+
+// Fetches slots for a (doctor, date, appointment-type) tuple.
+// Returns a sorted array; empty array if backend returns null/non-array.
+// Throws on network/HTTP errors — callers must catch.
+async function fetchAvailableSlots({ doctorId, date, appointmentTypeId }) {
+  const raw = await api.getSlots({
+    doctor_id: doctorId,
+    date,
+    appointment_type_id: appointmentTypeId,
+  });
+  return (Array.isArray(raw) ? raw : []).slice().sort(
+    (a, b) => a.start_time.localeCompare(b.start_time)
+  );
+}
+
 const APPT_STATUS_LABEL = {
   scheduled: "מתוכנן",
   cancelled: "בוטל",
@@ -914,12 +992,36 @@ function showAppointmentModal(appt, patientsMap, typesMap) {
   const statusLabel = APPT_STATUS_LABEL[status] || status;
   const statusBadge = APPT_STATUS_BADGE[status] || "";
   const canCancel = status === "scheduled";
-  const canReschedule = status === "scheduled" && appt.patient_id && appt.appointment_type_id;
+  const canEdit = status === "scheduled" && appt.patient_id && appt.appointment_type_id;
 
-  // State machine: 4 states (view, cancel-confirm, reschedule, reschedule-confirm).
-  // If a 5th lands, refactor to per-state dispatch + state object.
-  let selectedDate = localDateStr(new Date());  // YYYY-MM-DD; persists across back-nav
-  let selectedSlot = null;                       // {start_time, end_time}
+  // Edit-flow closure state.
+  const original = {
+    date: localDateStr(start),
+    time: fmtClock(start),
+    startTime: appt.start_time,
+    type_id: appt.appointment_type_id,
+    notes: appt.notes || "",
+  };
+  const editForm = {
+    date: original.date,
+    selectedSlot: null,                 // {start_time, end_time}; null means "no time change"
+    type_id: original.type_id,
+    notes: original.notes,
+  };
+  let editFetchSeq = 0;                  // race guard for slot fetch on date/type change
+
+  // Build type dropdown list — include current type even if deactivated; flag if deleted.
+  const activeTypes = [...typesMap.values()].filter((t) => t.is_active !== false);
+  const editTypes = activeTypes.slice();
+  let originalTypeMissing = false;
+  if (!editTypes.find((t) => t.id === original.type_id)) {
+    const cur = typesMap.get(original.type_id);
+    if (cur) {
+      editTypes.unshift({ ...cur, _inactive: true });
+    } else {
+      originalTypeMissing = true;
+    }
+  }
 
   const root = document.getElementById("modal-root");
   const close = () => (root.innerHTML = "");
@@ -960,7 +1062,7 @@ function showAppointmentModal(appt, patientsMap, typesMap) {
             </div>
           </div>
           <div class="form-actions">
-            ${canReschedule ? `<button class="btn btn-primary" id="appt-reschedule">תזמן מחדש</button>` : ""}
+            ${canEdit ? `<button class="btn btn-primary" id="appt-edit">ערוך תור</button>` : ""}
             ${canCancel ? `<button class="btn btn-danger" id="appt-cancel">בטל תור</button>` : ""}
             <button class="btn btn-secondary" id="appt-close">סגור</button>
           </div>
@@ -973,8 +1075,8 @@ function showAppointmentModal(appt, patientsMap, typesMap) {
     if (canCancel) {
       document.getElementById("appt-cancel").addEventListener("click", renderCancelConfirm);
     }
-    if (canReschedule) {
-      document.getElementById("appt-reschedule").addEventListener("click", renderReschedule);
+    if (canEdit) {
+      document.getElementById("appt-edit").addEventListener("click", renderEdit);
     }
   }
 
@@ -1020,152 +1122,266 @@ function showAppointmentModal(appt, patientsMap, typesMap) {
     });
   }
 
-  function renderReschedule() {
-    selectedSlot = null;  // clear any prior selection when entering this state
+  function renderEdit() {
+    const typeOpts = editTypes.map((t) => `
+      <option value="${attr(t.id)}" ${t.id === editForm.type_id ? "selected" : ""}>
+        ${esc(t.name)} (${t.duration_minutes} דק׳)${t._inactive ? " (לא פעיל)" : ""}
+      </option>`).join("");
+
     root.innerHTML = `
       <div class="modal-backdrop" id="modal-bg">
         <div class="modal">
-          <h3>תזמון מחדש</h3>
-          <p style="margin: 0 0 0.75rem; color: var(--text-secondary); font-size: 0.9rem">
-            תור נוכחי: ${esc(dateStr)} ${esc(fmtClock(start))} · ${esc(patientName)}
-          </p>
+          <h3>ערוך תור</h3>
+          <div class="patient-readonly">
+            מטופל: ${esc(patientName)}${phone ? ` · ${esc(phone)}` : ""}
+          </div>
+          ${originalTypeMissing
+            ? '<div class="form-warning">סוג התור המקורי לא נמצא — בחר סוג חדש</div>'
+            : ""}
           <div class="form-grid" style="grid-template-columns: 1fr">
             <div class="form-group">
-              <label>תאריך חדש</label>
-              <input type="date" id="resched-date" value="${attr(selectedDate)}" required>
+              <label>סוג תור</label>
+              <select id="edit-type">${typeOpts}</select>
+            </div>
+            <div class="form-group">
+              <label>תאריך</label>
+              <input type="date" id="edit-date" value="${attr(editForm.date)}">
+            </div>
+            <div class="form-group">
+              <label>שעה</label>
+              <div style="font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.4rem">
+                שעה נוכחית: ${esc(original.time)} — לחץ על שעה אחרת כדי לשנות
+              </div>
+              <div id="edit-slots" style="min-height: 2.5rem"></div>
+            </div>
+            <div class="form-group">
+              <label>הערות</label>
+              <textarea id="edit-notes" rows="3" style="width: 100%; box-sizing: border-box; font-family: inherit">${esc(editForm.notes)}</textarea>
             </div>
           </div>
-          <div id="resched-slots" style="margin-top: 0.75rem; min-height: 2.5rem"></div>
           <div class="form-actions">
-            <button class="btn btn-secondary" id="resched-back">חזור</button>
+            <button class="btn btn-primary" id="edit-save">שמור</button>
+            <button class="btn btn-secondary" id="edit-cancel">ביטול</button>
           </div>
         </div>
       </div>`;
     attachShowPicker(document.getElementById("modal-bg"));
-    document.getElementById("resched-back").addEventListener("click", renderView);
+    document.getElementById("edit-cancel").addEventListener("click", renderView);
     document.getElementById("modal-bg").addEventListener("click", (e) => {
       if (e.target === e.currentTarget) close();
     });
-    const dateInput = document.getElementById("resched-date");
-    dateInput.addEventListener("change", () => {
-      selectedDate = dateInput.value;
-      fetchAndRenderSlots();
+    document.getElementById("edit-type").addEventListener("change", (e) => {
+      editForm.type_id = e.target.value;
+      editForm.selectedSlot = null;
+      fetchAndRenderEditSlots();
+      updateEditSaveEnabled();
     });
-    fetchAndRenderSlots();
+    const dateInput = document.getElementById("edit-date");
+    dateInput.addEventListener("change", () => {
+      editForm.date = dateInput.value;
+      editForm.selectedSlot = null;
+      fetchAndRenderEditSlots();
+      updateEditSaveEnabled();
+    });
+    document.getElementById("edit-notes").addEventListener("input", (e) => {
+      editForm.notes = e.target.value;
+      updateEditSaveEnabled();
+    });
+    document.getElementById("edit-save").addEventListener("click", renderEditConfirm);
+
+    fetchAndRenderEditSlots();
+    updateEditSaveEnabled();
   }
 
-  // Reads closure values (doctorId, appt.appointment_type_id, selectedDate).
-  // #3c (empty-slot booking) will need this with different params — factor to
-  // module level with {doctorId, date, appointmentTypeId, onPick} when implementing #3c.
-  async function fetchAndRenderSlots() {
-    const slotsEl = document.getElementById("resched-slots");
-    if (!slotsEl) return;  // user navigated away mid-fetch
-    if (!selectedDate) {
-      slotsEl.innerHTML = '<div class="empty" style="padding:1rem">בחר תאריך</div>';
-      return;
-    }
+  async function fetchAndRenderEditSlots() {
+    const slotsEl = document.getElementById("edit-slots");
+    if (!slotsEl) return;
+    editFetchSeq++;
+    const seq = editFetchSeq;
     slotsEl.innerHTML = '<div class="loading">טוען זמינות...</div>';
+    let sorted;
     try {
-      const raw = await api.getSlots({
-        doctor_id: doctorId,
-        date: selectedDate,
-        appointment_type_id: appt.appointment_type_id,
-      });
-      const sorted = (Array.isArray(raw) ? raw : []).slice()
-        .sort((a, b) => a.start_time.localeCompare(b.start_time));
-      if (!sorted.length) {
-        slotsEl.innerHTML = '<div class="empty" style="padding:1rem">אין זמינות בתאריך זה</div>';
-        return;
-      }
-      slotsEl.innerHTML = `
-        <label style="display:block;font-size:0.85rem;color:var(--text-secondary);margin-bottom:0.4rem">בחר שעה</label>
-        <div class="slot-chips">
-          ${sorted.map((s) => `<button class="btn btn-secondary btn-sm slot-chip" data-start="${attr(s.start_time)}" data-end="${attr(s.end_time)}">${esc(slotTimeLabel(s.start_time))}</button>`).join("")}
-        </div>`;
-      slotsEl.querySelectorAll(".slot-chip").forEach((btn) => {
-        btn.addEventListener("click", () => {
-          selectedSlot = { start_time: btn.dataset.start, end_time: btn.dataset.end };
-          renderRescheduleConfirm();
-        });
+      sorted = await fetchAvailableSlots({
+        doctorId,
+        date: editForm.date,
+        appointmentTypeId: editForm.type_id,
       });
     } catch (err) {
+      if (seq !== editFetchSeq) return;
       slotsEl.innerHTML = `<div class="form-error">שגיאה בטעינת זמינות: ${esc(err.message)}</div>`;
+      return;
     }
+    if (seq !== editFetchSeq) return;
+
+    if (!sorted.length) {
+      slotsEl.innerHTML = '<div class="empty" style="padding:0.5rem">אין זמינות בתאריך זה</div>';
+      return;
+    }
+    const sameContext = editForm.date === original.date && editForm.type_id === original.type_id;
+    slotsEl.innerHTML = `
+      <div class="slot-chips">
+        ${sorted.map((s) => {
+          const label = slotTimeLabel(s.start_time);
+          const isCurrent = sameContext && label === original.time;
+          const isPicked = editForm.selectedSlot && editForm.selectedSlot.start_time === s.start_time;
+          const cls = `btn btn-secondary btn-sm slot-chip${isCurrent ? " slot-chip-current" : ""}${isPicked ? " slot-chip-picked" : ""}`;
+          return `<button class="${cls}" data-start="${attr(s.start_time)}" data-end="${attr(s.end_time)}">${esc(label)}</button>`;
+        }).join("")}
+      </div>`;
+    slotsEl.querySelectorAll(".slot-chip").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        editForm.selectedSlot = { start_time: btn.dataset.start, end_time: btn.dataset.end };
+        fetchAndRenderEditSlots();
+        updateEditSaveEnabled();
+      });
+    });
   }
 
-  function renderRescheduleConfirm() {
-    if (!selectedSlot) return renderReschedule();
-    const newDateDisp = selectedDate;
-    const newTimeDisp = slotTimeLabel(selectedSlot.start_time);
+  function canEditSave() {
+    // Date changed → must pick a slot in the new date.
+    if (editForm.date !== original.date && !editForm.selectedSlot) return false;
+    // Original type was deleted → must pick a different type before save.
+    if (originalTypeMissing && editForm.type_id === original.type_id) return false;
+    return true;
+  }
+  function updateEditSaveEnabled() {
+    const btn = document.getElementById("edit-save");
+    if (btn) btn.disabled = !canEditSave();
+  }
+
+  function renderEditConfirm() {
+    const newStartTime = editForm.selectedSlot ? editForm.selectedSlot.start_time : original.startTime;
+
+    // Compute diff rows
+    const noTimeChange = newStartTime === original.startTime;
+    const noTypeChange = editForm.type_id === original.type_id;
+    const noNotesChange = (editForm.notes || "").trim() === (original.notes || "").trim();
+    if (noTimeChange && noTypeChange && noNotesChange) {
+      toast("אין שינויים לשמירה", "error");
+      return;
+    }
+
+    const diffRows = [];
+    if (!noTypeChange) {
+      const oldTypeName = (typesMap.get(original.type_id) || {}).name || "—";
+      const newTypeName = (typesMap.get(editForm.type_id) || {}).name || "—";
+      diffRows.push(`<div><span class="muted">סוג תור:</span> ${esc(oldTypeName)} → ${esc(newTypeName)}</div>`);
+    }
+    if (!noTimeChange) {
+      const newDate = editForm.date;
+      const newTime = editForm.selectedSlot ? slotTimeLabel(editForm.selectedSlot.start_time) : original.time;
+      diffRows.push(`<div><span class="muted">תאריך+שעה:</span> ${esc(original.date)} ${esc(original.time)} → ${esc(newDate)} ${esc(newTime)}</div>`);
+    }
+    if (!noNotesChange) {
+      const oldNotes = truncForDiff(original.notes);
+      const newNotes = truncForDiff(editForm.notes);
+      diffRows.push(`<div title="${attr(`${original.notes}\n→\n${editForm.notes}`)}"><span class="muted">הערות:</span> "${esc(oldNotes)}" → "${esc(newNotes)}"</div>`);
+    }
+
     root.innerHTML = `
       <div class="modal-backdrop" id="modal-bg">
         <div class="modal">
-          <h3>אישור תזמון מחדש</h3>
-          <p style="margin: 0.5rem 0 1rem">
-            לתזמן את התור של ${esc(patientName)}<br>
-            מ-${esc(dateStr)} ${esc(fmtClock(start))}<br>
-            ל-${esc(newDateDisp)} ${esc(newTimeDisp)}?
+          <h3>אישור עריכת תור</h3>
+          <p style="margin: 0 0 0.5rem; color: var(--text-secondary); font-size: 0.9rem">
+            שינויים עבור ${esc(patientName)}:
           </p>
+          <div style="display: grid; gap: 0.3rem; font-size: 0.9rem; margin-bottom: 1rem">
+            ${diffRows.join("")}
+          </div>
           <div class="form-actions">
-            <button class="btn btn-primary" id="resched-yes">אישור</button>
-            <button class="btn btn-secondary" id="resched-no">חזור</button>
+            <button class="btn btn-primary" id="edit-yes">אישור</button>
+            <button class="btn btn-secondary" id="edit-no">חזור</button>
           </div>
         </div>
       </div>`;
-    document.getElementById("resched-no").addEventListener("click", renderReschedule);
+    document.getElementById("edit-no").addEventListener("click", renderEdit);
     document.getElementById("modal-bg").addEventListener("click", (e) => {
       if (e.target === e.currentTarget) close();
     });
-    document.getElementById("resched-yes").addEventListener("click", handleRescheduleConfirm);
+    document.getElementById("edit-yes").addEventListener("click", () => performEditSave(newStartTime));
   }
 
-  async function handleRescheduleConfirm() {
-    // TZ-safe same-slot guard — compare local-date+HH:MM keys, not raw strings.
-    // (slot strings are clinic-local; appt.start_time is UTC ISO — textually different
-    //  even for the same instant.)
-    const oldKey = `${localDateStr(start)} ${fmtClock(start)}`;
-    const newKey = `${selectedDate} ${slotTimeLabel(selectedSlot.start_time)}`;
-    if (oldKey === newKey) {
-      toast("השעה זהה לתור הקיים", "error");
+  async function performEditSave(newStartTime) {
+    const btn = document.getElementById("edit-yes");
+    btn.disabled = true;
+    btn.textContent = "שומר...";
+
+    const sameStart = newStartTime === original.startTime;
+    const newPayload = {
+      doctor_id: doctorId,
+      patient_id: appt.patient_id,
+      appointment_type_id: editForm.type_id,
+      start_time: newStartTime,
+      booked_by: "staff",
+      notes: (editForm.notes || "").trim() || null,
+    };
+
+    if (sameStart) {
+      // Same-time edit: slot is occupied by original. Cancel first.
+      try {
+        await api.cancelAppointment(appt.id);
+      } catch (err) {
+        // Original intact — surface error and let user retry.
+        btn.disabled = false;
+        btn.textContent = "אישור";
+        toast(`שגיאה בעדכון התור: ${err.message}`, "error");
+        return;
+      }
+
+      if (!document.getElementById("edit-yes")) {
+        // Modal closed mid-flight after cancel succeeded → calendar still
+        // shows the now-cancelled appointment until next refresh. Fire it.
+        loadCalendar();
+        return;
+      }
+
+      // Cancel succeeded → original is gone. Now book at the same slot.
+      try {
+        await api.bookAppointment(newPayload);
+        toast("התור עודכן", "success");
+        close();
+        loadCalendar();
+      } catch (err) {
+        // Cancel succeeded but book failed — patient's slot is gone.
+        // Switch to a recovery panel with retry option.
+        renderEditRecovery(newPayload, err);
+      }
       return;
     }
 
-    const btn = document.getElementById("resched-yes");
-    btn.disabled = true;
-    btn.textContent = "מתזמן...";
-
-    // Phase 1: book new
+    // Time-changing edit: new slot is empty, book first to preserve original
+    // until we know the new booking landed.
     try {
-      await api.bookAppointment({
-        doctor_id: doctorId,
-        patient_id: appt.patient_id,
-        appointment_type_id: appt.appointment_type_id,
-        start_time: selectedSlot.start_time,
-        booked_by: "staff",
-        notes: appt.notes || null,
-      });
+      await api.bookAppointment(newPayload);
     } catch (err) {
       if (err.name === "TypeError") {
-        // Network failure — original intact, but unclear if a duplicate landed.
         toast("שגיאת רשת — רענן לבדוק אם נוצר תור כפול", "error");
         close();
         loadCalendar();
         return;
       }
-      // HTTP error: original is intact, stay in confirm so user can retry.
       btn.disabled = false;
       btn.textContent = "אישור";
-      toast(`שגיאה בקביעת התור החדש: ${err.message}`, "error");
+      toast(`שגיאה ביצירת תור חדש: ${err.message}`, "error");
       return;
     }
 
-    // Phase 2: cancel original
+    if (!document.getElementById("edit-yes")) return;
+
     try {
       await api.cancelAppointment(appt.id);
-      toast("התור תוזמן מחדש", "success");
+      toast("התור עודכן", "success");
       close();
       loadCalendar();
     } catch (err) {
+      const alreadyGone = (err.status === 404)
+        || /already.*cancel|כבר.*בוטל/i.test(err.message || "");
+      if (alreadyGone) {
+        toast("התור עודכן", "success");
+        close();
+        loadCalendar();
+        return;
+      }
       const msg = err.name === "TypeError"
         ? "התור החדש נוצר אך הביטול לא ברור — רענן לבדוק"
         : "התור החדש נוצר אך הביטול נכשל — בדוק ידנית";
@@ -1175,12 +1391,74 @@ function showAppointmentModal(appt, patientsMap, typesMap) {
     }
   }
 
+  function renderEditRecovery(retryPayload, lastErr) {
+    const timeDisp = slotTimeLabel(retryPayload.start_time);
+    const dateDisp = retryPayload.start_time.slice(0, 10);
+    const typeName = (typesMap.get(retryPayload.appointment_type_id) || {}).name || "—";
+
+    root.innerHTML = `
+      <div class="modal-backdrop" id="modal-bg">
+        <div class="modal">
+          <h3 style="color: var(--danger)">שגיאת עדכון</h3>
+          <div class="form-error" style="display: block; margin-bottom: 1rem">
+            התור המקורי בוטל, אך יצירת התור החדש נכשלה:<br>
+            <code style="font-size: 0.85rem">${esc(lastErr.message || "שגיאה לא ידועה")}</code>
+          </div>
+          <p style="margin: 0 0 0.5rem; color: var(--text-secondary); font-size: 0.9rem">
+            פרטי התור לשחזור:
+          </p>
+          <div class="patient-readonly" style="margin-bottom: 0.75rem">
+            <div><span class="muted">מטופל:</span> ${esc(patientName)}${phone ? ` · ${esc(phone)}` : ""}</div>
+            <div><span class="muted">תאריך:</span> ${esc(dateDisp)}</div>
+            <div><span class="muted">שעה:</span> ${esc(timeDisp)}</div>
+            <div><span class="muted">סוג:</span> ${esc(typeName)}</div>
+            <div><span class="muted">הערות:</span> ${esc(retryPayload.notes || "—")}</div>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-primary" id="recovery-retry">נסה שוב</button>
+            <button class="btn btn-secondary" id="recovery-close">סגור</button>
+          </div>
+        </div>
+      </div>`;
+
+    document.getElementById("recovery-close").addEventListener("click", () => {
+      close();
+      loadCalendar();
+    });
+    document.getElementById("modal-bg").addEventListener("click", (e) => {
+      if (e.target === e.currentTarget) {
+        close();
+        loadCalendar();
+      }
+    });
+    document.getElementById("recovery-retry").addEventListener("click", async () => {
+      const retryBtn = document.getElementById("recovery-retry");
+      retryBtn.disabled = true;
+      retryBtn.textContent = "מנסה...";
+      try {
+        await api.bookAppointment(retryPayload);
+        toast("התור עודכן", "success");
+        close();
+        loadCalendar();
+      } catch (err) {
+        // Modal might be closed mid-retry.
+        const btnNow = document.getElementById("recovery-retry");
+        if (!btnNow) { loadCalendar(); return; }
+        btnNow.disabled = false;
+        btnNow.textContent = "נסה שוב";
+        toast(`שגיאה: ${err.message}`, "error");
+      }
+    });
+  }
+
   renderView();
 }
 
 function showBookModal({ date, time, typesMap }) {
   let selectedPatient = null;
   let selectedTypeId = "";
+  let selectedTime = time;
+  let editingPatient = false;
   let createMode = false;
   let searchTimer = null;
   let searchResults = [];
@@ -1196,8 +1474,9 @@ function showBookModal({ date, time, typesMap }) {
       <div class="modal-backdrop" id="modal-bg">
         <div class="modal">
           <h3>תור חדש</h3>
-          <p style="margin: 0 0 0.75rem; color: var(--text-secondary); font-size: 0.9rem">
-            ${esc(date)} בשעה ${esc(time)}
+          <p style="margin: 0 0 0.75rem; color: var(--text-secondary); font-size: 0.9rem; display: flex; gap: 0.5rem; align-items: center">
+            ${esc(date)} בשעה
+            <input type="time" id="book-time" value="${attr(selectedTime)}" step="900" style="font-size: 0.9rem; padding: 0.2rem">
           </p>
           <div class="form-grid" style="grid-template-columns: 1fr">
             <div class="form-group">
@@ -1229,8 +1508,19 @@ function showBookModal({ date, time, typesMap }) {
       selectedTypeId = e.target.value;
       updateBookEnabled();
     });
+    document.getElementById("book-time").addEventListener("change", (e) => {
+      if (e.target.value) selectedTime = e.target.value;
+    });
     document.getElementById("book-yes").addEventListener("click", handleBookConfirm);
 
+    renderPatientSection();
+    updateBookEnabled();
+  }
+
+  function onPatientSelected(p) {
+    selectedPatient = p;
+    editingPatient = false;
+    createMode = false;
     renderPatientSection();
     updateBookEnabled();
   }
@@ -1238,45 +1528,94 @@ function showBookModal({ date, time, typesMap }) {
   function renderPatientSection() {
     const sec = document.getElementById("book-patient-section");
     if (!sec) return;
+    if (selectedPatient && editingPatient) return renderPatientPanelEdit(sec);
+    if (selectedPatient)                    return renderPatientPanelView(sec);
+    if (createMode)                         return renderPatientCreate(sec);
+    return renderPatientSearch(sec);
+  }
 
-    if (selectedPatient) {
-      sec.innerHTML = `
-        <div style="display:flex;gap:0.5rem;align-items:center;padding:0.5rem 0.75rem;background:var(--primary-light);border-radius:var(--radius)">
-          <span style="font-weight:600">${esc(selectedPatient.first_name)} ${esc(selectedPatient.last_name)}</span>
-          <span style="color:var(--text-secondary);font-size:0.85rem">${esc(selectedPatient.phone || "")}</span>
-          <button class="btn btn-secondary btn-sm" id="patient-clear" style="margin-right:auto">החלף</button>
-        </div>`;
-      document.getElementById("patient-clear").addEventListener("click", () => {
-        selectedPatient = null;
-        renderPatientSection();
-        updateBookEnabled();
-      });
-      return;
-    }
-
-    if (createMode) {
-      sec.innerHTML = `
-        <div style="border:1px solid var(--border);border-radius:var(--radius);padding:0.75rem">
-          <div class="form-grid">
-            <div class="form-group"><label>שם פרטי</label><input id="np-first" required></div>
-            <div class="form-group"><label>שם משפחה</label><input id="np-last" required></div>
-            <div class="form-group" style="grid-column:1/-1"><label>טלפון</label><input id="np-phone" type="tel" required></div>
+  function renderPatientPanelView(sec) {
+    const p = selectedPatient;
+    sec.innerHTML = `
+      <div class="patient-panel">
+        <div class="patient-header">
+          <div class="patient-name">${esc(p.first_name)} ${esc(p.last_name)}</div>
+          <div class="patient-actions">
+            <button class="btn btn-secondary btn-sm" id="patient-edit">ערוך</button>
+            <button class="btn btn-secondary btn-sm" id="patient-clear">החלף</button>
           </div>
-          <div class="form-error" id="np-error" style="display:none"></div>
-          <div class="form-actions">
-            <button class="btn btn-primary btn-sm" id="np-create">צור והשתמש</button>
-            <button class="btn btn-secondary btn-sm" id="np-cancel">ביטול</button>
-          </div>
-        </div>`;
-      document.getElementById("np-cancel").addEventListener("click", () => {
-        createMode = false;
-        renderPatientSection();
-      });
-      document.getElementById("np-create").addEventListener("click", handleCreatePatient);
-      return;
-    }
+        </div>
+        <div class="patient-fields">
+          <div><span class="muted">טלפון:</span> ${esc(p.phone || "—")}</div>
+          <div><span class="muted">אימייל:</span> ${esc(p.email || "—")}</div>
+          <div><span class="muted">ת״ז:</span> ${esc(p.id_number || "—")}</div>
+          <div><span class="muted">תאריך לידה:</span> ${esc(formatDob(p.date_of_birth) || "—")}</div>
+        </div>
+      </div>`;
+    document.getElementById("patient-edit").addEventListener("click", () => {
+      editingPatient = true;
+      renderPatientSection();
+      updateBookEnabled();
+    });
+    document.getElementById("patient-clear").addEventListener("click", () => {
+      selectedPatient = null;
+      editingPatient = false;
+      renderPatientSection();
+      updateBookEnabled();
+    });
+  }
 
-    // Default: search mode
+  function renderPatientPanelEdit(sec) {
+    const p = selectedPatient;
+    sec.innerHTML = `
+      <div class="patient-panel">
+        <div class="form-grid">
+          <div class="form-group"><label>שם פרטי</label><input id="pe-first" value="${attr(p.first_name || "")}"></div>
+          <div class="form-group"><label>שם משפחה</label><input id="pe-last" value="${attr(p.last_name || "")}"></div>
+          <div class="form-group" style="grid-column:1/-1"><label>טלפון</label><input id="pe-phone" type="tel" value="${attr(p.phone || "")}"></div>
+          <div class="form-group" style="grid-column:1/-1"><label>אימייל</label><input id="pe-email" type="email" value="${attr(p.email || "")}"></div>
+          <div class="form-group"><label>ת״ז</label><input id="pe-id" value="${attr(p.id_number || "")}"></div>
+          <div class="form-group"><label>תאריך לידה</label><input id="pe-dob" type="date" value="${attr(p.date_of_birth || "")}"></div>
+        </div>
+        <div class="form-error" id="pe-error" style="display:none"></div>
+        <div class="form-actions">
+          <button class="btn btn-primary btn-sm" id="pe-save">שמור</button>
+          <button class="btn btn-secondary btn-sm" id="pe-cancel">ביטול</button>
+        </div>
+      </div>`;
+    document.getElementById("pe-save").addEventListener("click", handlePatientSave);
+    document.getElementById("pe-cancel").addEventListener("click", () => {
+      editingPatient = false;
+      renderPatientSection();
+      updateBookEnabled();
+    });
+  }
+
+  function renderPatientCreate(sec) {
+    sec.innerHTML = `
+      <div style="border:1px solid var(--border);border-radius:var(--radius);padding:0.75rem">
+        <div class="form-grid">
+          <div class="form-group"><label>שם פרטי</label><input id="np-first" required></div>
+          <div class="form-group"><label>שם משפחה</label><input id="np-last" required></div>
+          <div class="form-group" style="grid-column:1/-1"><label>טלפון</label><input id="np-phone" type="tel" required></div>
+          <div class="form-group" style="grid-column:1/-1"><label>אימייל (אופציונלי)</label><input id="np-email" type="email"></div>
+          <div class="form-group"><label>ת״ז (אופציונלי)</label><input id="np-id"></div>
+          <div class="form-group"><label>תאריך לידה (אופציונלי)</label><input id="np-dob" type="date"></div>
+        </div>
+        <div class="form-error" id="np-error" style="display:none"></div>
+        <div class="form-actions">
+          <button class="btn btn-primary btn-sm" id="np-create">צור והשתמש</button>
+          <button class="btn btn-secondary btn-sm" id="np-cancel">ביטול</button>
+        </div>
+      </div>`;
+    document.getElementById("np-cancel").addEventListener("click", () => {
+      createMode = false;
+      renderPatientSection();
+    });
+    document.getElementById("np-create").addEventListener("click", handleCreatePatient);
+  }
+
+  function renderPatientSearch(sec) {
     sec.innerHTML = `
       <input type="search" id="book-patient-search" placeholder="חיפוש לפי שם או טלפון..." autocomplete="off">
       <div id="book-patient-results" style="margin-top:0.4rem;max-height:200px;overflow-y:auto"></div>
@@ -1297,6 +1636,49 @@ function showBookModal({ date, time, typesMap }) {
       searchTimer = setTimeout(() => doSearch(q), 300);
     });
     searchInput.focus();
+  }
+
+  async function handlePatientSave() {
+    const errEl = document.getElementById("pe-error");
+    const showPeErr = (msg) => {
+      if (!errEl) return;
+      errEl.textContent = msg;
+      errEl.style.display = msg ? "" : "none";
+    };
+    const payload = {
+      first_name: document.getElementById("pe-first").value.trim(),
+      last_name:  document.getElementById("pe-last").value.trim(),
+      phone:      document.getElementById("pe-phone").value.trim(),
+      email:      document.getElementById("pe-email").value.trim() || null,
+      id_number:  document.getElementById("pe-id").value.trim() || null,
+      date_of_birth: document.getElementById("pe-dob").value || null,
+    };
+    if (!payload.first_name || !payload.last_name || !payload.phone) {
+      return showPeErr("שם פרטי, שם משפחה וטלפון חובה");
+    }
+    // Guard: warn if a previously-set optional field is being wiped.
+    const wiped = [];
+    const labels = { email: "אימייל", id_number: "ת״ז", date_of_birth: "תאריך לידה" };
+    for (const k of ["email", "id_number", "date_of_birth"]) {
+      if (selectedPatient[k] && !payload[k]) wiped.push(labels[k]);
+    }
+    if (wiped.length) {
+      if (!window.confirm(`השדות הבאים יימחקו: ${wiped.join(", ")}. להמשיך?`)) return;
+    }
+    showPeErr("");
+    const btn = document.getElementById("pe-save");
+    btn.disabled = true; btn.textContent = "שומר...";
+    try {
+      const updated = await api.updatePatient(selectedPatient.id, payload);
+      selectedPatient = updated;
+      editingPatient = false;
+      renderPatientSection();
+      updateBookEnabled();
+      toast("פרטי המטופל עודכנו", "success");
+    } catch (err) {
+      btn.disabled = false; btn.textContent = "שמור";
+      showPeErr(err.message);
+    }
   }
 
   async function doSearch(q) {
@@ -1321,11 +1703,7 @@ function showBookModal({ date, time, typesMap }) {
       resultsEl.querySelectorAll("button[data-patient-id]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const p = searchResults.find((x) => x.id === btn.dataset.patientId);
-          if (p) {
-            selectedPatient = p;
-            renderPatientSection();
-            updateBookEnabled();
-          }
+          if (p) onPatientSelected(p);
         });
       });
     } catch (err) {
@@ -1354,11 +1732,11 @@ function showBookModal({ date, time, typesMap }) {
         first_name: firstName,
         last_name: lastName,
         phone,
+        email: document.getElementById("np-email").value.trim() || null,
+        id_number: document.getElementById("np-id").value.trim() || null,
+        date_of_birth: document.getElementById("np-dob").value || null,
       });
-      selectedPatient = created;
-      createMode = false;
-      renderPatientSection();
-      updateBookEnabled();
+      onPatientSelected(created);
       toast("המטופל נוצר", "success");
     } catch (err) {
       btn.disabled = false;
@@ -1370,26 +1748,60 @@ function showBookModal({ date, time, typesMap }) {
   function updateBookEnabled() {
     const btn = document.getElementById("book-yes");
     if (!btn) return;
-    btn.disabled = !(selectedPatient && selectedTypeId && activeTypes.length);
+    btn.disabled = !(selectedPatient && selectedTypeId && activeTypes.length) || editingPatient;
   }
 
   async function handleBookConfirm() {
     const btn = document.getElementById("book-yes");
     const errEl = document.getElementById("book-error");
     const showErr = (msg) => {
+      if (!errEl) return;
       errEl.textContent = msg;
       errEl.style.display = msg ? "" : "none";
     };
     showErr("");
     btn.disabled = true;
     btn.textContent = "מתזמן...";
-    const start_time = `${date}T${time}:00`;
+
+    // Phase 1: fetch live slots for this date+type to get a backend-format
+    // start_time string. Sidesteps client-side TZ construction
+    // (per .work/project_scheduling_slots_tz_bug.md — no TZ shims in the
+    // dashboard) and gives concurrent-booking protection in the same call.
+    let match;
+    try {
+      const slots = await fetchAvailableSlots({
+        doctorId,
+        date,
+        appointmentTypeId: selectedTypeId,
+      });
+      match = slots.find((s) => slotTimeLabel(s.start_time) === selectedTime);
+    } catch (err) {
+      if (!document.getElementById("book-yes")) return; // modal closed mid-fetch
+      btn.disabled = false;
+      btn.textContent = "אישור";
+      if (err.name === "TypeError") {
+        showErr("שגיאת רשת בבדיקת זמינות — נסה שוב");
+      } else {
+        showErr(`שגיאה בבדיקת זמינות: ${err.message}`);
+      }
+      return;
+    }
+
+    if (!match) {
+      if (!document.getElementById("book-yes")) return;
+      btn.disabled = false;
+      btn.textContent = "אישור";
+      showErr("השעה כבר אינה זמינה — סגור ובחר שעה אחרת");
+      return;
+    }
+
+    // Phase 2: book with the API-returned start_time string (TZ-aware).
     try {
       await api.bookAppointment({
         doctor_id: doctorId,
         patient_id: selectedPatient.id,
         appointment_type_id: selectedTypeId,
-        start_time,
+        start_time: match.start_time,
         booked_by: "staff",
         notes: null,
       });
@@ -1403,6 +1815,7 @@ function showBookModal({ date, time, typesMap }) {
         loadCalendar();
         return;
       }
+      if (!document.getElementById("book-yes")) return;
       btn.disabled = false;
       btn.textContent = "אישור";
       showErr(err.message);
